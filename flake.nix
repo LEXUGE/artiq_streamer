@@ -12,16 +12,21 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        rust = pkgs.rust-bin.stable.latest.default;
+
+        rustBin = pkgs.rust-bin.stable.latest.default;
+        # Unstable rustfmt needed for our formatting options
+        rustfmt = pkgs.rust-bin.nightly."2024-06-10".rustfmt;
+
         rustPlatform = pkgs.makeRustPlatform {
-          cargo = rust;
-          rustc = rust;
+          cargo = rustBin;
+          rustc = rustBin;
         };
       in
       {
         devShells.default = with pkgs; mkShell {
           buildInputs = [
-            rust
+            (lib.hiPrio rustfmt)
+            rustBin
           ] ++ self.checks.${system}.pre-commit-check.enabledPackages;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
         };
@@ -32,13 +37,17 @@
               nixpkgs-fmt.enable = true;
               rustfmt.enable = true;
               rustfmt.packageOverrides = {
-                rustfmt = rust;
-                cargo = rust;
+                rustfmt = rustfmt;
+                cargo = rustBin;
               };
               clippy.enable = true;
               clippy.packageOverrides = {
-                clippy = rust;
-                cargo = rust;
+                clippy = rustBin;
+                cargo = rustBin;
+              };
+              cargo-check = {
+                enable = true;
+                package = rustBin;
               };
             };
           };
