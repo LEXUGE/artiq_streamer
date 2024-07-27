@@ -13,6 +13,12 @@ pub enum Message {
     },
 }
 
+impl Message {
+    pub fn len(self: Self) -> usize {
+        32
+    }
+}
+
 pub fn message<'a>() -> impl Parser<&'a [u8], Message, Error<&'a [u8]>> {
     alt((sample_msg(), stop_msg()))
 }

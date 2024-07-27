@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-zeromq = "0.4.0"
+zmq = "0.10"
 anyhow = "1"
-tokio = "1"
+tokio = {version = "1", features = ["full"]}
 bytes = "1"
 # combine = "4"
 nom = "7"

@@ -1,9 +1,7 @@
 use anyhow::Result;
-use bytes::Bytes;
 use nom::{bytes::complete::take, combinator::peek, Parser};
 use parser::{message, Message};
 use tokio::net::UdpSocket;
-use zeromq::{PubSocket, Socket, SocketSend, ZmqMessage};
 
 mod parser;
 
@@ -11,13 +9,16 @@ const BUF_SIZE: usize = 1024;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut pubsock = PubSocket::new();
-    pubsock.bind("tcp://0.0.0.0:5006").await?;
+    let ctx = zmq::Context::new();
+
+    let pubsock = ctx.socket(zmq::PUB).unwrap();
+    pubsock.bind("tcp://0.0.0.0:5006")?;
 
     let sock = UdpSocket::bind("0.0.0.0:5005").await?;
     let mut buf = [0u8; BUF_SIZE];
-    loop {
-        let _ = sock.recv(&mut buf).await?;
+    let mut prev_timestamp = 0u64;
+    'packet: loop {
+        let len = sock.recv(&mut buf).await?;
 
         // To process the packet
         // 1. Dissect the packet into messages
@@ -26,22 +27,36 @@ async fn main() -> Result<()> {
         // ZeroMQ (also zmq.rs) does publisher side filtering so the network throughput is not a
         // concern
         //
-        let mut input = &buf[..];
+        let mut input = &buf[..len];
+
+        println!("Another packet!");
 
         // Peek the message and return the corresponding raw message as well
-        while let Ok((i, (msg, msg_raw))) = peek(message()).and(take(32usize)).parse(input) {
-            input = i;
+        // TODO: ignore unknown packet format of length of 32 bytes
+        while let Ok((i, msg)) = peek(message()).parse(input) {
+            let msg_raw;
+            (input, msg_raw) = take::<_, _, nom::error::Error<_>>(msg.len())
+                .parse(i)
+                .unwrap();
             match msg {
-                Message::Sample { channel, .. } => {
-                    // TODO: The zeromq is not very satisfactory as it's quite allocation intensive
+                Message::Sample {
+                    channel, timestamp, ..
+                } => {
+                    if prev_timestamp > timestamp {
+                        dbg!(timestamp, prev_timestamp, input.len());
+                    } else {
+                        println!("normal prev {}, current {}", prev_timestamp, timestamp);
+                    }
+                    prev_timestamp = timestamp;
 
                     // The RTIO channel as channel topic
-                    let mut m = ZmqMessage::from(channel.to_string().as_str());
-                    m.push_front(Bytes::copy_from_slice(msg_raw));
-                    pubsock.send(m).await?;
+                    pubsock.send_multipart([channel.to_string().as_bytes(), msg_raw], 0)?;
                 }
-                x => {
-                    dbg!(x);
+                Message::Stop { .. } => {
+                    dbg!(msg);
+                    pubsock.send_multipart([b"STOP_CHANNEL", msg_raw], 0)?;
+                    // IGNORE reset of the packet
+                    continue 'packet;
                 }
             }
         }

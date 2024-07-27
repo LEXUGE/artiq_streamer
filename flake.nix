@@ -27,6 +27,7 @@
           buildInputs = [
             (lib.hiPrio rustfmt)
             rustBin
+            zeromq
           ] ++ self.checks.${system}.pre-commit-check.enabledPackages;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
         };
@@ -56,6 +57,7 @@
           pname = "artiq_streamer";
           version = "git";
           src = ./.;
+          buildInputs = [ pkgs.zeromq ];
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
