@@ -1,5 +1,7 @@
 use anyhow::Result;
-use nom::{bytes::complete::take, combinator::peek, Parser};
+use clap::{Parser, Subcommand};
+use log::{debug, info, warn};
+use nom::{bytes::complete::take, combinator::peek, Parser as NomParser};
 use parser::{message, Message};
 use tokio::net::UdpSocket;
 
@@ -7,17 +9,41 @@ mod parser;
 
 const BUF_SIZE: usize = 1024;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    #[command(subcommand)]
+    commands: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Publish {
+        #[arg(default_value = "tcp://0.0.0.0:5006")]
+        publisher_addr: String,
+        #[arg(default_value = "0.0.0.0:5005")]
+        udp_addr: String,
+    },
+    Set {
+        kasli_addr: String,
+        start: u64,
+        end: u64,
+    },
+}
+
+async fn publisher(publisher_addr: &str, udp_addr: &str) -> Result<()> {
     let ctx = zmq::Context::new();
 
     let pubsock = ctx.socket(zmq::PUB).unwrap();
-    pubsock.bind("tcp://0.0.0.0:5006")?;
+    pubsock.bind(publisher_addr)?;
 
-    let sock = UdpSocket::bind("0.0.0.0:5005").await?;
+    let sock = UdpSocket::bind(udp_addr).await?;
+
+    info!("Started");
+
     let mut buf = [0u8; BUF_SIZE];
     let mut prev_timestamp = 0u64;
-    'packet: loop {
+    loop {
         let len = sock.recv(&mut buf).await?;
 
         // To process the packet
@@ -29,10 +55,10 @@ async fn main() -> Result<()> {
         //
         let mut input = &buf[..len];
 
-        println!("Another packet!");
+        debug!("Received packet of len: {}", len);
 
         // Peek the message and return the corresponding raw message as well
-        // TODO: ignore unknown packet format of length of 32 bytes
+        // TODO: Support all packet format
         while let Ok((i, msg)) = peek(message()).parse(input) {
             let msg_raw;
             (input, msg_raw) = take::<_, _, nom::error::Error<_>>(msg.len())
@@ -43,9 +69,17 @@ async fn main() -> Result<()> {
                     channel, timestamp, ..
                 } => {
                     if prev_timestamp > timestamp {
-                        dbg!(timestamp, prev_timestamp, input.len());
+                        warn!(
+                            "Message out of order! Prev {}, Current {}, Position {}",
+                            prev_timestamp,
+                            timestamp,
+                            input.len()
+                        );
                     } else {
-                        println!("normal prev {}, current {}", prev_timestamp, timestamp);
+                        debug!(
+                            "Normal timestamp order. Prev {}, Current {}",
+                            prev_timestamp, timestamp
+                        );
                     }
                     prev_timestamp = timestamp;
 
@@ -53,14 +87,28 @@ async fn main() -> Result<()> {
                     pubsock.send_multipart([channel.to_string().as_bytes(), msg_raw], 0)?;
                 }
                 Message::Stop { .. } => {
-                    dbg!(msg);
                     pubsock.send_multipart([b"STOP_CHANNEL", msg_raw], 0)?;
-                    // IGNORE reset of the packet
-                    continue 'packet;
+                    // // IGNORE reset of the packet
+                    // continue 'packet;
                 }
             }
         }
         // Each packet should contain certain number of messsages exactly
         assert_eq!(input.len(), 0)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    colog::init();
+
+    let cli = Cli::parse();
+
+    match cli.commands {
+        Commands::Set { .. } => unimplemented!(),
+        Commands::Publish {
+            publisher_addr,
+            udp_addr,
+        } => publisher(&publisher_addr, &udp_addr).await,
     }
 }
