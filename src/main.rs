@@ -105,7 +105,18 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.commands {
-        Commands::Set { .. } => unimplemented!(),
+        Commands::Set {
+            kasli_addr,
+            start,
+            end,
+        } => {
+            let s = UdpSocket::bind("0.0.0.0:0").await?;
+            s.connect(kasli_addr).await?;
+            s.send(&[start.to_be_bytes(), end.to_be_bytes()].concat())
+                .await?;
+            info!("streaming window setting has been sent.");
+            Ok(())
+        }
         Commands::Publish {
             publisher_addr,
             udp_addr,
